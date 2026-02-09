@@ -115,7 +115,7 @@ def main():
         send_telegram(
             "🤖 <b>Bot Started Successfully</b>\n\n"
             "▶️ Trigger: Manual Run\n"
-            "⏱ Auto Scan: Every 5 Minutes\n"
+            "⏱ Auto Scan: Every 15 Minutes\n"
             f"🕒 UTC: {utc}\n\n"
             "📡 Monitoring markets..."
         )
