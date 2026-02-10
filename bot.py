@@ -4,7 +4,6 @@ import requests
 import json
 import os
 from datetime import datetime, timezone
-from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ===============================
 # 🔐 TELEGRAM CONFIG
@@ -21,14 +20,14 @@ LOOKBACK = 15
 STATE_FILE = "state.json"
 
 # ===============================
-# 🔁 EXCHANGE (MEXC – FREE)
+# 🔁 EXCHANGE (MEXC)
 # ===============================
 exchange = ccxt.mexc({
     "enableRateLimit": True
 })
 
 # ===============================
-# 📦 STATE HANDLING
+# 📦 STATE
 # ===============================
 def load_state():
     if os.path.exists(STATE_FILE):
@@ -43,21 +42,18 @@ def save_state(state):
 # ===============================
 # 📨 TELEGRAM
 # ===============================
-def send_telegram(message):
-    try:
-        requests.post(
-            f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
-            json={
-                "chat_id": CHAT_ID,
-                "text": message,
-                "parse_mode": "HTML"
-            }
-        )
-    except:
-        pass
+def send_telegram(text):
+    requests.post(
+        f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
+        json={
+            "chat_id": CHAT_ID,
+            "text": text,
+            "parse_mode": "HTML"
+        }
+    )
 
 # ===============================
-# 📊 FETCH OHLCV
+# 📊 FETCH DATA
 # ===============================
 def fetch_data(symbol, timeframe):
     candles = exchange.fetch_ohlcv(
@@ -80,7 +76,7 @@ def check_signal(symbol, timeframe, state):
     curr = df.iloc[-2]  # last CLOSED candle
 
     swing_high = df["high"].iloc[-(LOOKBACK + 2):-2].max()
-    swing_low  = df["low"].iloc[-(LOOKBACK + 2):-2].min()
+    swing_low = df["low"].iloc[-(LOOKBACK + 2):-2].min()
 
     candle_time = str(int(curr.time))
     key = f"{symbol}_{timeframe}"
@@ -116,27 +112,21 @@ def check_signal(symbol, timeframe, state):
 # ▶️ MAIN
 # ===============================
 def main():
-    # 🔔 Send start message ONLY on manual run
-    if os.getenv("GITHUB_EVENT_NAME") == "workflow_dispatch":
-        utc = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
-        send_telegram(
-            "🤖 <b>Bot Started Successfully</b>\n\n"
-            "▶️ Trigger: Manual Run\n"
-            "⏱ Scan: Every 15 Minutes\n"
-            f"🕒 UTC: {utc}\n\n"
-            "📡 Monitoring markets..."
-        )
+    # ✅ Send start message EVERY RUN
+    send_telegram(
+        "🤖 <b>Swing Breakout Bot Started</b>\n\n"
+        "⏱ Scan Interval: 5 Minutes\n"
+        f"🕒 UTC: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')}"
+    )
 
     state = load_state()
 
-    with ThreadPoolExecutor(max_workers=6) as executor:
-        tasks = [
-            executor.submit(check_signal, pair, tf, state)
-            for pair in PAIRS
-            for tf in TIMEFRAMES
-        ]
-        for _ in as_completed(tasks):
-            pass
+    for pair in PAIRS:
+        for tf in TIMEFRAMES:
+            try:
+                check_signal(pair, tf, state)
+            except Exception as e:
+                print(f"Error {pair} {tf}: {e}")
 
     save_state(state)
 
