@@ -4,6 +4,7 @@ import requests
 import json
 import os
 from datetime import datetime, timezone
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ===============================
 # 🔐 TELEGRAM CONFIG
@@ -20,9 +21,11 @@ LOOKBACK = 15
 STATE_FILE = "state.json"
 
 # ===============================
-# 🔁 EXCHANGE
+# 🔁 EXCHANGE (MEXC – FREE)
 # ===============================
-exchange = ccxt.mexc({"enableRateLimit": True})
+exchange = ccxt.mexc({
+    "enableRateLimit": True
+})
 
 # ===============================
 # 📦 STATE HANDLING
@@ -38,25 +41,29 @@ def save_state(state):
         json.dump(state, f)
 
 # ===============================
-# 📨 TELEGRAM ALERT
+# 📨 TELEGRAM
 # ===============================
 def send_telegram(message):
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    payload = {
-        "chat_id": CHAT_ID,
-        "text": message,
-        "parse_mode": "HTML"
-    }
-    requests.post(url, json=payload, timeout=10)
+    try:
+        requests.post(
+            f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
+            json={
+                "chat_id": CHAT_ID,
+                "text": message,
+                "parse_mode": "HTML"
+            }
+        )
+    except:
+        pass
 
 # ===============================
-# 📊 FETCH DATA
+# 📊 FETCH OHLCV
 # ===============================
 def fetch_data(symbol, timeframe):
     candles = exchange.fetch_ohlcv(
         symbol,
         timeframe=timeframe,
-        limit=LOOKBACK + 5
+        limit=LOOKBACK + 3
     )
     return pd.DataFrame(
         candles,
@@ -64,7 +71,7 @@ def fetch_data(symbol, timeframe):
     )
 
 # ===============================
-# 🚀 CHECK SIGNAL
+# 🚀 SWING BREAKOUT / BREAKDOWN
 # ===============================
 def check_signal(symbol, timeframe, state):
     df = fetch_data(symbol, timeframe)
@@ -73,7 +80,7 @@ def check_signal(symbol, timeframe, state):
     curr = df.iloc[-2]  # last CLOSED candle
 
     swing_high = df["high"].iloc[-(LOOKBACK + 2):-2].max()
-    swing_low = df["low"].iloc[-(LOOKBACK + 2):-2].min()
+    swing_low  = df["low"].iloc[-(LOOKBACK + 2):-2].min()
 
     candle_time = str(int(curr.time))
     key = f"{symbol}_{timeframe}"
@@ -85,10 +92,10 @@ def check_signal(symbol, timeframe, state):
 
     if prev.close <= swing_high and curr.close > swing_high:
         send_telegram(
-            f"🚀 <b>BULLISH BREAKOUT</b>\n\n"
+            f"🚀 <b>BULLISH SWING BREAKOUT</b>\n\n"
             f"📊 Pair: {symbol}\n"
             f"⏱ Timeframe: {timeframe}\n"
-            f"📈 Level: {swing_high:.4f}\n"
+            f"📈 Swing High: {swing_high:.4f}\n"
             f"💰 Close: {curr.close:.4f}\n"
             f"🕒 UTC: {utc}"
         )
@@ -96,10 +103,10 @@ def check_signal(symbol, timeframe, state):
 
     elif prev.close >= swing_low and curr.close < swing_low:
         send_telegram(
-            f"🩸 <b>BEARISH BREAKDOWN</b>\n\n"
+            f"🩸 <b>BEARISH SWING BREAKDOWN</b>\n\n"
             f"📊 Pair: {symbol}\n"
             f"⏱ Timeframe: {timeframe}\n"
-            f"📉 Level: {swing_low:.4f}\n"
+            f"📉 Swing Low: {swing_low:.4f}\n"
             f"💰 Close: {curr.close:.4f}\n"
             f"🕒 UTC: {utc}"
         )
@@ -109,27 +116,30 @@ def check_signal(symbol, timeframe, state):
 # ▶️ MAIN
 # ===============================
 def main():
-    # 🔔 Send message ONLY on manual run
+    # 🔔 Send start message ONLY on manual run
     if os.getenv("GITHUB_EVENT_NAME") == "workflow_dispatch":
         utc = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
         send_telegram(
             "🤖 <b>Bot Started Successfully</b>\n\n"
             "▶️ Trigger: Manual Run\n"
-            "⏱ Auto Scan: Every 15 Minutes\n"
+            "⏱ Scan: Every 15 Minutes\n"
             f"🕒 UTC: {utc}\n\n"
             "📡 Monitoring markets..."
         )
 
     state = load_state()
 
-    for pair in PAIRS:
-        for tf in TIMEFRAMES:
-            try:
-                check_signal(pair, tf, state)
-            except Exception as e:
-                print(f"Error {pair} {tf}: {e}")
+    with ThreadPoolExecutor(max_workers=6) as executor:
+        tasks = [
+            executor.submit(check_signal, pair, tf, state)
+            for pair in PAIRS
+            for tf in TIMEFRAMES
+        ]
+        for _ in as_completed(tasks):
+            pass
 
     save_state(state)
 
 if __name__ == "__main__":
     main()
+    
